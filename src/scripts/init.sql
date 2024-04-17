@@ -1,3 +1,7 @@
+DROP DATABASE lazygrocer;
+CREATE DATABASE IF NOT EXISTS lazygrocer;
+use lazygrocer;
+
 -- tables
 CREATE TABLE IF NOT EXISTS Recipe (
     title VARCHAR(50) PRIMARY KEY,
@@ -45,7 +49,7 @@ CREATE TABLE IF NOT EXISTS Instruction (
 
 CREATE TABLE IF NOT EXISTS Steps (
 	recipe_title VARCHAR(50),
-    id INTEGER PRIMARY KEY,
+    id INTEGER AUTO_INCREMENT PRIMARY KEY,
     description TEXT,
     FOREIGN KEY (recipe_title)
 	REFERENCES Recipe(title)
@@ -104,7 +108,7 @@ CREATE TABLE IF NOT EXISTS ILforI (
         ON UPDATE CASCADE
         ON DELETE CASCADE
 );
-
+-- SELECT ingredient_name FROM ILForI WHERE grocery_list_name = gl_name;
 -- Allows user to read ALL recipes 
 DELIMITER //
 
@@ -119,19 +123,15 @@ BEGIN
         i.cook_time AS instruction_cook_time,
         i.prep_time AS instruction_prep_time,
         i.servings AS instruction_servings,
-        i.calories AS instruction_calories,
-        s.id AS step_id,
-        s.description AS step_description
+        i.calories AS instruction_calories
     FROM 
         Recipe r
     LEFT JOIN 
         Rating rt ON r.title = rt.recipe_title
     LEFT JOIN 
         Instruction i ON r.title = i.recipe_title
-    LEFT JOIN 
-        Steps s ON r.title = s.recipe_title
     ORDER BY 
-        r.title, s.id;
+        r.title;
 END //
 
 DELIMITER ;
@@ -151,21 +151,17 @@ BEGIN
         i.cook_time AS instruction_cook_time,
         i.prep_time AS instruction_prep_time,
         i.servings AS instruction_servings,
-        i.calories AS instruction_calories,
-        s.id AS step_id,
-        s.description AS step_description
+        i.calories AS instruction_calories
     FROM 
         Recipe r
     LEFT JOIN 
         Rating rt ON r.title = rt.recipe_title
     LEFT JOIN 
         Instruction i ON r.title = i.recipe_title
-    LEFT JOIN 
-        Steps s ON r.title = s.recipe_title
     WHERE 
         r.title = recipe_title
     ORDER BY 
-        r.title, s.id;
+        r.title;
 END //
 
 DELIMITER ;
@@ -246,20 +242,63 @@ END //
 DELIMITER ;
 
 
+-- Allows the user to read the steps for a recipe
+DELIMITER //
+
+CREATE PROCEDURE get_recipe_steps(
+    IN in_recipe_title VARCHAR(50)
+)
+BEGIN
+    SELECT id, description
+    FROM Steps
+    WHERE recipe_title = in_recipe_title;
+END //
+
+DELIMITER ;
+
+
+-- Allows the user to retrieve all recipes associated with a specific recipe_list
+DELIMITER //
+
+CREATE PROCEDURE get_recipes_by_list_name(
+    IN list_name VARCHAR(50) -- Input parameter for the recipe list name
+)
+BEGIN
+    SELECT r.title, r.description, r.date_published
+    FROM Recipe r
+    INNER JOIN RinRL rl ON r.title = rl.recipe_title
+    WHERE rl.recipe_list_name = list_name;
+END //
+
+DELIMITER ;
+
+
 -- Allows the user to add a recipe to the recipe table
 DELIMITER //
 
 CREATE PROCEDURE add_recipe(
     IN recipe_title VARCHAR(50),
     IN recipe_description TEXT,
-    IN date_published DATE
+    IN date_published DATE,
+    IN recipe_list_name VARCHAR(50) -- New parameter for the recipe list name
 )
 BEGIN
+    -- Insert the recipe into the Recipe table
     INSERT INTO Recipe (title, description, date_published)
     VALUES (recipe_title, recipe_description, date_published);
+
+    -- Insert the recipe into the RinRL table
+    INSERT INTO RinRL (recipe_title, recipe_list_name)
+    VALUES (recipe_title, recipe_list_name);
+
+    -- Return the title of the inserted recipe
+    SELECT recipe_title;
 END //
 
 DELIMITER ;
+
+
+
 
 
 -- Allows the user to add a rating to the rating table
@@ -289,6 +328,7 @@ CREATE PROCEDURE add_step(
 BEGIN
     INSERT INTO Steps (recipe_title, description)
     VALUES (recipe_title, step_description);
+    SELECT recipe_title;
 END //
 
 DELIMITER ;
@@ -345,17 +385,28 @@ DELIMITER ;
 -- Allows the user to add an ingredient to the ingredient table 
 DELIMITER //
 
-CREATE PROCEDURE add_ingredient(
+CREATE PROCEDURE add_ingredient_and_relation(
     IN ingredient_name VARCHAR(50),
     IN inventory VARCHAR(50),
-    IN last_added DATE
+    IN last_added DATE,
+    IN recipe_title VARCHAR(50), -- New parameter for the recipe title
+    IN quantity VARCHAR(50) -- New parameter for the quantity of the ingredient in the recipe
 )
 BEGIN
+    -- Insert the ingredient into the Ingredient table
     INSERT INTO Ingredient (name, inventory, last_added)
     VALUES (ingredient_name, inventory, last_added);
+
+    -- Insert the ingredient into the RincludesI table
+    INSERT INTO RincludesI (recipe_title, ingredient_name, quantity)
+    VALUES (recipe_title, ingredient_name, quantity);
+
+    -- Return the name of the inserted ingredient
+    SELECT ingredient_name;
 END //
 
 DELIMITER ;
+
 
 
 -- Allows the user to update the values in the recipe table
@@ -575,6 +626,47 @@ CREATE PROCEDURE delete_grocery_list(
 BEGIN
     DELETE FROM GroceryList
     WHERE name = list_name;
+END //
+
+DELIMITER ;
+
+
+DELIMITER //
+
+CREATE PROCEDURE get_ingredients_for_recipes(
+    IN recipe_titles VARCHAR(255) -- Comma-separated list of recipe titles
+)
+BEGIN
+    -- Temporary table to store ingredient names
+    CREATE TEMPORARY TABLE temp_ingredients (
+        ingredient_name VARCHAR(50)
+    );
+
+    SET @startPos = 1;
+
+    WHILE @startPos <= CHAR_LENGTH(recipe_titles) DO
+        SET @endPos = LOCATE(',', recipe_titles, @startPos);
+        IF @endPos = 0 THEN
+            SET @endPos = CHAR_LENGTH(recipe_titles) + 1;
+        END IF;
+
+        SET @currentRecipeTitle = TRIM(SUBSTRING(recipe_titles, @startPos, @endPos - @startPos));
+
+        -- Insert ingredients for current recipe into the temporary table
+        INSERT INTO temp_ingredients (ingredient_name)
+        SELECT ingredient_name
+        FROM RincludesI
+        WHERE recipe_title = @currentRecipeTitle;
+
+        SET @startPos = @endPos + 1;
+    END WHILE;
+
+    -- Select distinct ingredients from the temporary table
+    SELECT DISTINCT ingredient_name
+    FROM temp_ingredients;
+
+    -- Drop the temporary table
+    DROP TEMPORARY TABLE IF EXISTS temp_ingredients;
 END //
 
 DELIMITER ;
